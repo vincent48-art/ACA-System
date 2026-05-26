@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ACA-FIS | Add User</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
+    <style>
+        .password-wrapper { position: relative; }
+        .password-wrapper input { padding-right: 2.5rem; }
+        .toggle-password { position: absolute; right: 0.5rem; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; font-size: 1.1rem; color: var(--text-muted); padding: 0.3rem; line-height: 1; }
+        .toggle-password:hover { color: var(--primary); }
+        #passwordStrength { font-size: 0.8rem; font-weight: 500; }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <aside class="sidebar">
+            <div class="sidebar-header"><h2>🛡️ ACA-FIS</h2><small>Field Intelligence System</small></div>
+            <nav class="sidebar-nav">
+                <a href="dashboard.html">📊 Dashboard</a>
+                <a href="reports.html">📋 All Reports</a>
+                <a href="analytics.html">📈 Analytics</a>
+                <a href="report.html">➕ New Report</a>
+                <a href="add-user.html" class="active">👤 Add User</a>
+                <a href="manage-products.html" id="manageProductsLink" style="display:none;">🏷️ Manage Products</a>
+            </nav>
+            <div class="sidebar-footer"><button onclick="logout()" class="btn btn-outline" style="color:white; border-color:white;">Logout</button></div>
+        </aside>
+        <main class="main-content">
+            <div class="top-bar"><h1>Add New User</h1></div>
+            <div class="form-card">
+                <form id="addUserForm">
+                    <div class="form-group"><label>Email *</label><input type="email" id="newEmail" class="form-control" required></div>
+                    <div class="form-group">
+                        <label>Password *</label>
+                        <div class="password-wrapper">
+                            <input type="password" id="newPassword" class="form-control" required minlength="6">
+                            <button type="button" class="toggle-password" aria-label="Show password">👁️</button>
+                        </div>
+                        <small id="passwordStrength" style="display:block; margin-top:0.3rem;"></small>
+                    </div>
+                    <div class="form-group"><label>Role *</label><select id="newRole" class="form-control" required><option value="">-- Select --</option><option value="officer">Officer</option><option value="admin">Admin</option></select></div>
+                    <button type="submit" class="btn btn-primary btn-block">Create User</button>
+                </form>
+                <div id="formStatus" class="alert" style="display:none;"></div>
+            </div>
+        </main>
+    </div>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+    <script src="firebase.js"></script>
+    <script src="app.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            await checkAuth(['admin']);
+            // Show manage products link for admin
+            document.getElementById('manageProductsLink').style.display = 'flex';
+
+            const passwordInput = document.getElementById('newPassword');
+            const strengthEl = document.getElementById('passwordStrength');
+            const toggleBtn = document.querySelector('.toggle-password');
+
+            passwordInput.addEventListener('input', () => {
+                const val = passwordInput.value;
+                let strength = 0;
+                if (val.length >= 8) strength++;
+                if (/[A-Z]/.test(val)) strength++;
+                if (/[0-9]/.test(val)) strength++;
+                if (/[^A-Za-z0-9]/.test(val)) strength++;
+                const levels = [ { text: 'Weak', color: '#dc2626' }, { text: 'Fair', color: '#d97706' }, { text: 'Good', color: '#c9a827' }, { text: 'Strong', color: '#16a34a' } ];
+                const level = strength >= 3 ? levels[strength] : levels[0];
+                strengthEl.textContent = `Password strength: ${level.text}`;
+                strengthEl.style.color = level.color;
+            });
+
+            toggleBtn.addEventListener('click', () => {
+                const type = passwordInput.getAttribute('type') === 'password' ? 'text' : 'password';
+                passwordInput.setAttribute('type', type);
+                toggleBtn.textContent = type === 'password' ? '👁️' : '🙈';
+            });
+
+            document.getElementById('addUserForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const statusDiv = document.getElementById('formStatus');
+                const email = document.getElementById('newEmail').value.trim();
+                const password = passwordInput.value;
+                const role = document.getElementById('newRole').value;
+                statusDiv.style.display = 'none';
+                try {
+                    const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+                    const uid = userCredential.user.uid;
+                    await db.collection('users').doc(uid).set({ role });
+                    logAction('user_created', { createdEmail: email, role });
+                    statusDiv.textContent = `User ${email} created with role "${role}".`;
+                    statusDiv.className = 'alert alert-success';
+                    document.getElementById('addUserForm').reset();
+                    strengthEl.textContent = '';
+                } catch (error) {
+                    statusDiv.style.display = 'block';
+                    if (error.code === 'auth/email-already-in-use') statusDiv.textContent = 'Email already in use.';
+                    else if (error.code === 'auth/weak-password') statusDiv.textContent = 'Password must be at least 6 characters.';
+                    else statusDiv.textContent = 'Error: ' + error.message;
+                    statusDiv.className = 'alert alert-error';
+                }
+            });
+        });
+    </script>
+</body>
+</html>

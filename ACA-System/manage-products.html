@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ACA-FIS | Manage Verified Products</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        .scanner-overlay {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 9999;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+        .scanner-container {
+            width: 90%;
+            max-width: 500px;
+            background: white;
+            border-radius: var(--radius);
+            padding: 1rem;
+            text-align: center;
+        }
+        #reader { width: 100%; }
+        .scanner-close {
+            margin-top: 0.5rem;
+            padding: 0.5rem 1.5rem;
+            background: var(--danger);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .code-display {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin: 0.5rem 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>🛡️ ACA-FIS</h2>
+                <small>Field Intelligence System</small>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="dashboard.html">📊 Dashboard</a>
+                <a href="reports.html">📋 All Reports</a>
+                <a href="analytics.html">📈 Analytics</a>
+                <a href="report.html">➕ New Report</a>
+                <a href="add-user.html">👤 Add User</a>
+                <a href="manage-products.html" class="active">🏷️ Manage Products</a>
+            </nav>
+            <div class="sidebar-footer">
+                <button onclick="logout()" class="btn btn-outline" style="color:white; border-color:white;">Logout</button>
+            </div>
+        </aside>
+        <main class="main-content">
+            <div class="top-bar"><h1>Manage Verified Products</h1></div>
+
+            <div class="form-card">
+                <h3>Add Genuine Product Barcode</h3>
+                <form id="productForm">
+                    <div class="form-group">
+                        <label>Barcode / QR Code *</label>
+                        <input type="text" id="barcode" class="form-control" required placeholder="e.g. 8901234567890">
+                        <button type="button" id="scanBarcodeBtn" class="btn btn-outline" style="margin-top:0.5rem;">📡 Scan Barcode</button>
+                    </div>
+                    <div class="form-group">
+                        <label>Product Name *</label>
+                        <input type="text" id="prodName" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <textarea id="prodDesc" class="form-control"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Brand</label>
+                        <input type="text" id="prodBrand" class="form-control">
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-block">Add to Verified Database</button>
+                </form>
+                <div id="formStatus" class="alert" style="display:none;"></div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Scanner Overlay -->
+    <div id="scannerOverlay" class="scanner-overlay">
+        <div class="scanner-container">
+            <div id="reader"></div>
+            <div class="code-display" id="scannedCodeDisplay"></div>
+            <button id="stopScanner" class="scanner-close">✖ Close Scanner</button>
+        </div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+    <script src="firebase.js"></script>
+    <script src="app.js"></script>
+    <script>
+        let html5QrCode = null;
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            await checkAuth(['admin']);
+
+            // Scanner buttons
+            document.getElementById('scanBarcodeBtn').addEventListener('click', startScanner);
+            document.getElementById('stopScanner').addEventListener('click', stopScanner);
+
+            // Form submission
+            document.getElementById('productForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const statusDiv = document.getElementById('formStatus');
+                const barcode = document.getElementById('barcode').value.trim();
+                const name = document.getElementById('prodName').value.trim();
+                const desc = document.getElementById('prodDesc').value.trim();
+                const brand = document.getElementById('prodBrand').value.trim();
+
+                if (!barcode || !name) {
+                    statusDiv.textContent = 'Barcode and product name are required.';
+                    statusDiv.className = 'alert alert-error';
+                    statusDiv.style.display = 'block';
+                    return;
+                }
+
+                try {
+                    await db.collection('verified_products').doc(barcode).set({
+                        productName: name,
+                        description: desc,
+                        brand: brand,
+                        addedBy: auth.currentUser.uid,
+                        addedAt: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                    statusDiv.textContent = `Product "${name}" added with barcode ${barcode}.`;
+                    statusDiv.className = 'alert alert-success';
+                    statusDiv.style.display = 'block';
+                    document.getElementById('productForm').reset();
+                } catch (error) {
+                    statusDiv.textContent = 'Error: ' + error.message;
+                    statusDiv.className = 'alert alert-error';
+                    statusDiv.style.display = 'block';
+                }
+            });
+        });
+
+        // ------- Scanner (same as in report.html) -------
+        async function startScanner() {
+            const overlay = document.getElementById('scannerOverlay');
+            overlay.style.display = 'flex';
+            try {
+                html5QrCode = new Html5Qrcode("reader");
+                await html5QrCode.start(
+                    { facingMode: "environment" },
+                    { fps: 10, qrbox: { width: 250, height: 250 } },
+                    (decodedText) => {
+                        document.getElementById('scannedCodeDisplay').textContent = 'Scanned: ' + decodedText;
+                        document.getElementById('barcode').value = decodedText;
+                        // Auto-stop after successful scan
+                        stopScanner();
+                    },
+                    () => {}
+                );
+            } catch (err) {
+                console.error(err);
+                alert('Could not start scanner. Please allow camera access.');
+                overlay.style.display = 'none';
+            }
+        }
+
+        async function stopScanner() {
+            if (html5QrCode && html5QrCode.isScanning) {
+                await html5QrCode.stop().catch(console.error);
+                html5QrCode = null;
+            }
+            document.getElementById('scannerOverlay').style.display = 'none';
+        }
+    </script>
+</body>
+</html>

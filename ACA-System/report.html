@@ -1,0 +1,350 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ACA-FIS | New Report</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
+    <!-- QR/Barcode Scanner Library -->
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        .ai-result-box {
+            margin-top: 0.8rem;
+            padding: 0.8rem;
+            background: #f1f5f9;
+            border-left: 4px solid var(--primary);
+            border-radius: 6px;
+            font-size: 0.9rem;
+            display: none;
+        }
+        .ai-result-box .ai-flag { color: var(--danger); font-weight: bold; }
+        .ai-result-box .ai-ok { color: var(--success); font-weight: bold; }
+
+        /* Scanner overlay */
+        .scanner-overlay {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 9999;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+        .scanner-container {
+            width: 90%;
+            max-width: 500px;
+            background: white;
+            border-radius: var(--radius);
+            padding: 1rem;
+            text-align: center;
+        }
+        #reader { width: 100%; }
+        .scanner-close {
+            margin-top: 0.5rem;
+            padding: 0.5rem 1.5rem;
+            background: var(--danger);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>🛡️ ACA-FIS</h2>
+                <small>Field Intelligence System</small>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="dashboard.html">📊 Dashboard</a>
+                <a href="reports.html">📋 Reports</a>
+                <a href="report.html" class="active">➕ New Report</a>
+            </nav>
+            <div class="sidebar-footer">
+                <button onclick="logout()" class="btn btn-outline" style="color:white; border-color:white;">Logout</button>
+            </div>
+        </aside>
+        <main class="main-content">
+            <div class="top-bar"><h1>Submit Counterfeit Report</h1></div>
+            <div class="form-card">
+                <form id="reportForm">
+                    <div class="form-group">
+                        <label>Product Name *</label>
+                        <input type="text" id="productName" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Description *</label>
+                        <textarea id="description" class="form-control" required></textarea>
+                    </div>
+
+                    <!-- Photo + AI + Scanner buttons -->
+                    <div class="form-group">
+                        <label>Photo for AI Verification</label>
+                        <div style="display:flex; flex-wrap:wrap; gap:0.8rem; margin-bottom:1rem;">
+                            <button type="button" id="cameraBtn" class="btn btn-outline">📷 Open Camera</button>
+                            <button type="button" id="galleryBtn" class="btn btn-outline">🖼️ Choose from Gallery</button>
+                            <button type="button" id="scanBarcodeBtn" class="btn btn-outline">📡 Scan Barcode</button>
+                            <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none;">
+                            <input type="file" id="galleryInput" accept="image/*" style="display:none;">
+                        </div>
+                        <img id="photoPreview" src="#" alt="Preview" style="display:none; max-width:200px; margin-bottom:0.5rem; border-radius:8px;">
+                        <button type="button" id="startAnalysisBtn" class="btn btn-primary" style="display:none;">🧠 Start AI Analysis</button>
+                        <small id="scanStatus" style="display:block; margin-top:0.3rem;"></small>
+                        <div id="aiResultBox" class="ai-result-box"></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>GPS Coordinates *</label>
+                        <input type="text" id="gpsCoords" class="form-control" readonly>
+                        <button type="button" id="getLocationBtn" class="btn btn-outline" style="margin-top:0.5rem;">📍 Get My Location</button>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-block" id="submitBtn">Submit Report</button>
+                </form>
+                <div id="formStatus" class="alert" style="display:none;"></div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Scanner Overlay -->
+    <div id="scannerOverlay" class="scanner-overlay">
+        <div class="scanner-container">
+            <div id="reader"></div>
+            <button id="stopScanner" class="scanner-close">✖ Close Scanner</button>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+    <script src="firebase.js"></script>
+    <script src="app.js"></script>
+    <script src="vision-api.js"></script>
+    <script>
+        // ------- Global State -------
+        let currentCoords = null;
+        let selectedFile = null;
+        let aiResult = null;
+        let html5QrCode = null;
+
+        // ------- Initialisation -------
+        document.addEventListener('DOMContentLoaded', async () => {
+            await checkAuth(['officer', 'admin']);
+
+            // GPS
+            document.getElementById('getLocationBtn').addEventListener('click', async () => {
+                try {
+                    const pos = await getCurrentPosition();
+                    currentCoords = pos;
+                    document.getElementById('gpsCoords').value = `${pos.lat.toFixed(6)}, ${pos.lng.toFixed(6)}`;
+                    showToast('Location acquired!');
+                } catch (err) { showToast('Location error', 'error'); }
+            });
+            try {
+                const pos = await getCurrentPosition();
+                currentCoords = pos;
+                document.getElementById('gpsCoords').value = `${pos.lat.toFixed(6)}, ${pos.lng.toFixed(6)}`;
+            } catch(e) {}
+
+            // Camera / Gallery
+            document.getElementById('cameraBtn').addEventListener('click', () => document.getElementById('cameraInput').click());
+            document.getElementById('galleryBtn').addEventListener('click', () => document.getElementById('galleryInput').click());
+            document.getElementById('cameraInput').addEventListener('change', handleFileSelect);
+            document.getElementById('galleryInput').addEventListener('change', handleFileSelect);
+
+            // AI Analysis
+            document.getElementById('startAnalysisBtn').addEventListener('click', runAIAnalysis);
+
+            // Barcode Scanner
+            document.getElementById('scanBarcodeBtn').addEventListener('click', startScanner);
+            document.getElementById('stopScanner').addEventListener('click', stopScanner);
+
+            // Submit form
+            document.getElementById('reportForm').addEventListener('submit', handleSubmit);
+        });
+
+        // ------- File Handling -------
+        function handleFileSelect(e) {
+            if (e.target.files.length > 0) {
+                selectedFile = e.target.files[0];
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    document.getElementById('photoPreview').src = ev.target.result;
+                    document.getElementById('photoPreview').style.display = 'block';
+                };
+                reader.readAsDataURL(selectedFile);
+                document.getElementById('startAnalysisBtn').style.display = 'inline-block';
+                aiResult = null;
+                document.getElementById('aiResultBox').style.display = 'none';
+                document.getElementById('scanStatus').textContent = '';
+            }
+        }
+
+        // ------- AI Analysis (with progress steps) -------
+        async function runAIAnalysis() {
+            if (!selectedFile) {
+                showToast('Please select a photo first.', 'warning');
+                return;
+            }
+            const statusEl = document.getElementById('scanStatus');
+            const resultBox = document.getElementById('aiResultBox');
+            statusEl.textContent = 'Step 1/3: Detecting logos and labels…';
+            resultBox.style.display = 'none';
+
+            try {
+                const base64 = await fileToBase64(selectedFile);
+                const aiPromise = analyzeImageWithVisionAPI(base64);
+
+                setTimeout(() => { statusEl.textContent = 'Step 2/3: Searching for original product images online…'; }, 5000);
+                setTimeout(() => { statusEl.textContent = 'Step 3/3: Comparing with authentic references…'; }, 12000);
+
+                const result = await aiPromise;
+                if (!result) {
+                    statusEl.textContent = 'AI analysis failed. Check connection.';
+                    return;
+                }
+
+                aiResult = result;
+
+                let html = '';
+                if (result.logos.length) html += `<strong>Logos detected:</strong> ${result.logos.join(', ')}<br>`;
+                if (result.labels.length) html += `<strong>Labels:</strong> ${result.labels.slice(0,5).join(', ')}<br>`;
+                if (result.webEntities.length) html += `<strong>Web matches:</strong> ${result.webEntities.slice(0,3).join(', ')}<br>`;
+                if (result.details) {
+                    html += `<strong>Similar images found online:</strong> ${result.details.similarImagesCount || 0}<br>`;
+                }
+                html += result.potentialConcern
+                    ? '<span class="ai-flag">⚠️ Potential counterfeit detected!</span><br>'
+                    : '<span class="ai-ok">✅ Product appears authentic.</span><br>';
+                html += result.deepAnalysisNotes ? `<em>${result.deepAnalysisNotes}</em>` : '';
+                resultBox.innerHTML = html;
+                resultBox.style.display = 'block';
+                statusEl.textContent = 'Deep analysis complete.';
+            } catch (error) {
+                console.error(error);
+                statusEl.textContent = 'AI analysis error.';
+            }
+        }
+
+        // ------- QR / Barcode Scanner -------
+        async function startScanner() {
+            const overlay = document.getElementById('scannerOverlay');
+            overlay.style.display = 'flex';
+
+            try {
+                html5QrCode = new Html5Qrcode("reader");
+                await html5QrCode.start(
+                    { facingMode: "environment" },
+                    { fps: 10, qrbox: { width: 250, height: 250 } },
+                    async (decodedText) => {
+                        console.log('Scanned:', decodedText);
+                        await checkBatchCode(decodedText);
+                        await stopScanner();
+                    },
+                    (errorMessage) => {}
+                );
+            } catch (err) {
+                console.error('Scanner start error:', err);
+                showToast('Could not start camera. Please grant camera permission.', 'error');
+                overlay.style.display = 'none';
+            }
+        }
+
+        async function stopScanner() {
+            if (html5QrCode && html5QrCode.isScanning) {
+                await html5QrCode.stop().catch(console.error);
+                html5QrCode = null;
+            }
+            document.getElementById('scannerOverlay').style.display = 'none';
+        }
+
+        // ------- Updated: Check against verified_products -------
+        async function checkBatchCode(code) {
+            try {
+                const docRef = await db.collection('verified_products').doc(code).get();
+                if (docRef.exists) {
+                    const data = docRef.data();
+                    showToast(`✅ Verified product: ${data.productName}`, 'success');
+                    if (data.productName) document.getElementById('productName').value = data.productName;
+                    if (data.description) document.getElementById('description').value = data.description;
+                } else {
+                    showToast('⚠️ BARCODE NOT RECOGNISED – possible counterfeit!', 'error');
+                    document.getElementById('productName').value = code;
+                    document.getElementById('description').value = '⚠️ Scanned code not in verified database. Product may be counterfeit.';
+                }
+            } catch (error) {
+                console.error('Error checking batch code:', error);
+                showToast('Failed to verify batch. Check connection.', 'error');
+            }
+        }
+
+        // ------- Form Submission -------
+        async function handleSubmit(e) {
+            e.preventDefault();
+            const statusDiv = document.getElementById('formStatus');
+            const submitBtn = document.getElementById('submitBtn');
+            if (!currentCoords) {
+                statusDiv.style.display = 'block';
+                statusDiv.textContent = 'Please acquire GPS coordinates.';
+                statusDiv.className = 'alert alert-error';
+                return;
+            }
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Submitting...';
+
+            let photoBase64 = null;
+            if (selectedFile) photoBase64 = await fileToBase64(selectedFile);
+
+            const reportData = {
+                product: document.getElementById('productName').value.trim(),
+                description: document.getElementById('description').value.trim(),
+                lat: currentCoords.lat,
+                lng: currentCoords.lng,
+                userId: auth.currentUser.uid,
+                status: 'pending',
+                photoBase64: photoBase64,
+                aiResult: aiResult,
+                scannedCode: document.getElementById('productName').value.trim()
+            };
+
+            try {
+                await db.collection('reports').add({
+                    ...reportData,
+                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                });
+                logAction('report_submitted', { product: reportData.product, aiFlag: aiResult?.potentialConcern });
+                statusDiv.style.display = 'block';
+                statusDiv.textContent = 'Report submitted!';
+                statusDiv.className = 'alert alert-success';
+                document.getElementById('reportForm').reset();
+                selectedFile = null;
+                aiResult = null;
+                document.getElementById('photoPreview').style.display = 'none';
+                document.getElementById('startAnalysisBtn').style.display = 'none';
+                document.getElementById('aiResultBox').style.display = 'none';
+                currentCoords = null;
+                document.getElementById('gpsCoords').value = '';
+            } catch (error) {
+                if (error.code === 'unavailable' || error.message.includes('network')) {
+                    saveReportOffline(reportData);
+                    statusDiv.textContent = 'Offline: saved locally.';
+                    statusDiv.className = 'alert alert-warning';
+                } else {
+                    statusDiv.textContent = 'Error: ' + error.message;
+                    statusDiv.className = 'alert alert-error';
+                }
+                statusDiv.style.display = 'block';
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Submit Report';
+            }
+        }
+    </script>
+</body>
+</html>

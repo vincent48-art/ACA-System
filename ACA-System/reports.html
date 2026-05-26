@@ -1,0 +1,145 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ACA-FIS | All Reports</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+    <style>
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); }
+        .modal-content { background: white; margin: 10% auto; padding: 2rem; border-radius: var(--radius); max-width: 500px; }
+        .close-modal { float: right; cursor: pointer; font-size: 1.2rem; }
+        .ai-detail { font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>🛡️ ACA-FIS</h2>
+                <small>Field Intelligence System</small>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="dashboard.html">📊 Dashboard</a>
+                <a href="reports.html" class="active">📋 All Reports</a>
+                <a href="analytics.html">📈 Analytics</a>
+                <a href="report.html">➕ New Report</a>
+                <a href="add-user.html" id="addUserLink" style="display:none;">👤 Add User</a>
+                <a href="manage-products.html" id="manageProductsLink" style="display:none;">🏷️ Manage Products</a>
+            </nav>
+            <div class="sidebar-footer">
+                <button onclick="logout()" class="btn btn-outline" style="color:white; border-color:white;">Logout</button>
+            </div>
+        </aside>
+        <main class="main-content">
+            <div class="top-bar">
+                <h1>Reports Database</h1>
+                <div>
+                    <button id="exportCSV" class="btn btn-outline">📥 Export CSV</button>
+                    <button id="exportPDF" class="btn btn-outline">📄 Export PDF</button>
+                </div>
+            </div>
+            <div style="overflow-x:auto;">
+                <table class="data-table" id="reportsTable">
+                    <thead>
+                        <tr>
+                            <th>Product</th><th>Description</th><th>Coordinates</th><th>Time</th><th>Status</th><th>AI Flag</th><th>Photo</th><th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <p id="noReportsMsg" style="display:none; text-align:center;">No reports found.</p>
+        </main>
+    </div>
+
+    <div id="aiModal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal">&times;</span>
+            <h3>🧠 AI Intelligence Feedback</h3>
+            <div id="aiModalBody" class="ai-detail"></div>
+        </div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+    <script src="firebase.js"></script>
+    <script src="app.js"></script>
+    <script>
+        let allReports = []; let currentUserRole = null; let currentUserId = null;
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            const { user, role } = await checkAuth(['admin', 'officer']);
+            currentUserRole = role; currentUserId = user.uid;
+            if (role === 'admin') {
+                document.getElementById('addUserLink').style.display = 'flex';
+                document.getElementById('manageProductsLink').style.display = 'flex';
+            }
+            loadReports();
+            document.getElementById('exportCSV').addEventListener('click', () => exportToCSV(allReports));
+            document.getElementById('exportPDF').addEventListener('click', () => exportToPDF(allReports));
+            document.querySelector('.close-modal').addEventListener('click', () => document.getElementById('aiModal').style.display = 'none');
+            window.addEventListener('click', (e) => { if (e.target === document.getElementById('aiModal')) document.getElementById('aiModal').style.display = 'none'; });
+        });
+
+        // ... rest of the reports functions (same as previously provided)
+        // [Keep your existing loadReports(), showAIModal(), escapeHtml() functions here]
+        // I'll include a full block below for completeness.
+        function loadReports() {
+            const tbody = document.querySelector('#reportsTable tbody'); const noMsg = document.getElementById('noReportsMsg');
+            const urlParams = new URLSearchParams(window.location.search); const statusFilter = urlParams.get('status'); const aiFlaggedFilter = urlParams.get('aiFlagged') === 'true';
+            let query = db.collection('reports').orderBy('timestamp', 'desc');
+            if (statusFilter) query = query.where('status', '==', statusFilter);
+            if (currentUserRole === 'officer') query = query.where('userId', '==', currentUserId);
+            query.onSnapshot(snapshot => {
+                allReports = []; tbody.innerHTML = '';
+                let docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                if (aiFlaggedFilter) docs = docs.filter(d => d.aiResult && d.aiResult.potentialConcern === true);
+                if (docs.length === 0) { noMsg.style.display = 'block'; return; } else noMsg.style.display = 'none';
+
+                docs.forEach(d => {
+                    const row = { id: d.id, product: d.product || '', description: d.description || '', lat: d.lat, lng: d.lng, timestamp: d.timestamp, status: d.status || 'pending', photoBase64: d.photoBase64 || null, aiResult: d.aiResult || null };
+                    allReports.push(row);
+                    const tr = document.createElement('tr');
+                    const coords = (row.lat && row.lng) ? `${row.lat.toFixed(4)}, ${row.lng.toFixed(4)}` : 'N/A';
+                    const time = formatTimestamp(row.timestamp);
+                    const statusClass = `badge badge-${row.status}`;
+                    const photoHtml = row.photoBase64 ? `<img src="${row.photoBase64}" alt="Photo" style="max-width:50px;">` : '—';
+                    const aiFlagHtml = row.aiResult?.potentialConcern ? '<span style="color:red; font-weight:bold;">⚠️</span>' : '—';
+                    const actionsHtml = currentUserRole === 'admin' ? `<button class="btn btn-sm btn-outline mark-btn" data-id="${row.id}" data-status="fake">🚫 Fake</button> <button class="btn btn-sm btn-outline mark-btn" data-id="${row.id}" data-status="verified">✅ Verified</button> <button class="btn btn-sm btn-outline intel-btn" data-ai='${JSON.stringify(row.aiResult)}'>🧠 Intel</button>` : '—';
+                    tr.innerHTML = `<td>${escapeHtml(row.product)}</td><td>${escapeHtml(row.description)}</td><td>${coords}</td><td>${time}</td><td><span class="${statusClass}">${row.status}</span></td><td>${aiFlagHtml}</td><td>${photoHtml}</td><td>${actionsHtml}</td>`;
+                    tbody.appendChild(tr);
+                });
+
+                if (currentUserRole === 'admin') {
+                    document.querySelectorAll('.mark-btn').forEach(btn => btn.addEventListener('click', async (e) => {
+                        const id = e.target.dataset.id; const newStatus = e.target.dataset.status;
+                        try { await db.collection('reports').doc(id).update({ status: newStatus }); logAction('status_changed', { reportId: id, newStatus }); showToast(`Marked as ${newStatus}.`); } catch (err) { showToast('Update failed', 'error'); }
+                    }));
+                    document.querySelectorAll('.intel-btn').forEach(btn => btn.addEventListener('click', (e) => { const aiData = JSON.parse(e.target.dataset.ai); showAIModal(aiData); }));
+                }
+            });
+        }
+
+        function showAIModal(aiData) {
+            if (!aiData) document.getElementById('aiModalBody').innerHTML = 'No AI analysis data available.';
+            else {
+                let html = '';
+                if (aiData.logos?.length) html += `<p><strong>Logos:</strong> ${aiData.logos.join(', ')}</p>`;
+                if (aiData.labels?.length) html += `<p><strong>Labels:</strong> ${aiData.labels.join(', ')}</p>`;
+                if (aiData.webEntities?.length) html += `<p><strong>Web matches:</strong> ${aiData.webEntities.join(', ')}</p>`;
+                if (aiData.deepAnalysisNotes) html += `<p><strong>Deep analysis:</strong> ${aiData.deepAnalysisNotes}</p>`;
+                html += aiData.potentialConcern ? '<p style="color:red; font-weight:bold;">⚠️ Potential counterfeit flagged by AI.</p>' : '<p style="color:green;">✅ AI sees no obvious concern.</p>';
+                document.getElementById('aiModalBody').innerHTML = html;
+            }
+            document.getElementById('aiModal').style.display = 'block';
+        }
+
+        function escapeHtml(text) { const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }; return String(text).replace(/[&<>"']/g, m => map[m]); }
+    </script>
+</body>
+</html>

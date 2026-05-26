@@ -1,0 +1,116 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ACA-FIS | Analytics</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        .chart-wrapper { background: white; border-radius: var(--radius); box-shadow: var(--shadow); padding: 1.5rem; margin-bottom: 1.5rem; }
+        .chart-container { position: relative; height: 380px; width: 100%; }
+        .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+        @media (max-width: 768px) { .chart-row { grid-template-columns: 1fr; } }
+        .insights-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1.5rem; }
+        .insight-card { background: white; border-radius: var(--radius); box-shadow: var(--shadow); padding: 1.5rem; }
+        .insight-card h3 { margin-bottom: 0.5rem; color: var(--primary); }
+        .insight-list { list-style: none; padding: 0; margin: 0; }
+        .insight-list li { display: flex; justify-content: space-between; padding: 0.6rem 0; border-bottom: 1px solid var(--border); font-size: 0.95rem; }
+        .insight-list li:last-child { border-bottom: none; }
+        .insight-value { font-weight: 700; color: var(--primary-dark); background: #f1f5f9; padding: 0.2rem 0.6rem; border-radius: 20px; }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <aside class="sidebar">
+            <div class="sidebar-header"><h2>🛡️ ACA-FIS</h2><small>Field Intelligence System</small></div>
+            <nav class="sidebar-nav">
+                <a href="dashboard.html">📊 Dashboard</a>
+                <a href="reports.html">📋 All Reports</a>
+                <a href="analytics.html" class="active">📈 Analytics</a>
+                <a href="report.html">➕ New Report</a>
+                <a href="add-user.html" id="addUserLink" style="display:none;">👤 Add User</a>
+                <a href="manage-products.html" id="manageProductsLink" style="display:none;">🏷️ Manage Products</a>
+            </nav>
+            <div class="sidebar-footer"><button onclick="logout()" class="btn btn-outline" style="color:white; border-color:white;">Logout</button></div>
+        </aside>
+        <main class="main-content">
+            <div class="top-bar"><h1>Analytics & Trends</h1></div>
+            <div class="chart-row">
+                <div class="chart-wrapper">
+                    <h3>📈 Report Trends (Highs & Lows)</h3>
+                    <p style="color: var(--text-muted);">Monthly report submissions over time</p>
+                    <div class="chart-container"><canvas id="trendChart"></canvas></div>
+                </div>
+                <div class="chart-wrapper">
+                    <h3>🥧 Top Counterfeit Products</h3>
+                    <p style="color: var(--text-muted);">Distribution by product name</p>
+                    <div class="chart-container"><canvas id="categoryChart"></canvas></div>
+                </div>
+            </div>
+            <div class="insights-row">
+                <div class="insight-card"><h3>🔝 Top 5 Months (Highest Reports)</h3><ul id="topMonthsList" class="insight-list"><li>No data yet.</li></ul></div>
+                <div class="insight-card"><h3>🏆 Top 5 Reported Products</h3><ul id="topProductsList" class="insight-list"><li>No data yet.</li></ul></div>
+            </div>
+            <div id="noDataMsg" style="display:none; text-align:center; padding:2rem;">No data yet.</div>
+        </main>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+    <script src="firebase.js"></script>
+    <script src="app.js"></script>
+    <script>
+        let trendChart, categoryChart; let currentUserRole = null; let currentUserId = null;
+        document.addEventListener('DOMContentLoaded', async () => {
+            const { user, role } = await checkAuth(['admin', 'officer']);
+            currentUserRole = role; currentUserId = user.uid;
+            if (role === 'admin') {
+                document.getElementById('addUserLink').style.display = 'flex';
+                document.getElementById('manageProductsLink').style.display = 'flex';
+            }
+            loadAnalytics();
+        });
+
+        // ... (keep your existing loadAnalytics, populateTopLists functions)
+        // I'll include the full analytics script for completeness.
+        async function loadAnalytics() {
+            let query = db.collection('reports');
+            if (currentUserRole === 'officer') query = query.where('userId', '==', currentUserId);
+            const snapshot = await query.get();
+            if (snapshot.empty) {
+                document.getElementById('noDataMsg').style.display = 'block';
+                document.querySelector('.chart-row').style.display = 'none';
+                document.querySelector('.insights-row').style.display = 'none';
+                return;
+            }
+            const monthCount = {}, productCount = {};
+            snapshot.forEach(doc => {
+                const d = doc.data();
+                if (d.timestamp) { const date = d.timestamp.toDate(); const key = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`; monthCount[key] = (monthCount[key] || 0) + 1; }
+                const product = d.product || 'Unknown'; productCount[product] = (productCount[product] || 0) + 1;
+            });
+            const sortedMonths = Object.keys(monthCount).sort(); const trendData = sortedMonths.map(m => monthCount[m]);
+            if (trendChart) trendChart.destroy(); if (categoryChart) categoryChart.destroy();
+            const trendCtx = document.getElementById('trendChart').getContext('2d');
+            const gradient = trendCtx.createLinearGradient(0, 0, 0, 380); gradient.addColorStop(0, 'rgba(26,86,50, 0.3)'); gradient.addColorStop(1, 'rgba(26,86,50, 0.0)');
+            trendChart = new Chart(trendCtx, { type: 'line', data: { labels: sortedMonths, datasets: [{ label: 'Reports', data: trendData, borderColor: '#1a5632', backgroundColor: gradient, borderWidth: 3, fill: true, tension: 0.4, pointBackgroundColor: '#c9a827', pointBorderColor: '#ffffff', pointBorderWidth: 2, pointRadius: 5, pointHoverRadius: 7 }] }, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }, plugins: { legend: { display: false } } } });
+            const productLabels = Object.keys(productCount); const productValues = Object.values(productCount);
+            const catCtx = document.getElementById('categoryChart').getContext('2d');
+            categoryChart = new Chart(catCtx, { type: 'doughnut', data: { labels: productLabels, datasets: [{ data: productValues, backgroundColor: ['#1a5632','#2d7a47','#c9a827','#e6c84e','#0e3b20','#4d9078'] }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } } });
+            populateTopLists(monthCount, productCount);
+        }
+        function populateTopLists(monthCount, productCount) {
+            const sortedMonths = Object.entries(monthCount).sort((a,b) => b[1]-a[1]).slice(0,5);
+            const monthsList = document.getElementById('topMonthsList'); monthsList.innerHTML = '';
+            sortedMonths.forEach(([m,c]) => monthsList.innerHTML += `<li><span>${m}</span> <span class="insight-value">${c} reports</span></li>`);
+            const sortedProducts = Object.entries(productCount).sort((a,b) => b[1]-a[1]).slice(0,5);
+            const productsList = document.getElementById('topProductsList'); productsList.innerHTML = '';
+            sortedProducts.forEach(([p,c]) => productsList.innerHTML += `<li><span>${escapeHtml(p)}</span> <span class="insight-value">${c} reports</span></li>`);
+        }
+        function escapeHtml(text) { const map = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}; return String(text).replace(/[&<>"']/g, m => map[m]); }
+    </script>
+</body>
+</html>

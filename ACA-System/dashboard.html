@@ -1,0 +1,153 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ACA-FIS Dashboard | Admin & Officer</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
+</head>
+<body>
+    <div class="app-layout">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>🛡️ ACA-FIS</h2>
+                <small>Field Intelligence System</small>
+            </div>
+            <nav class="sidebar-nav" id="sidebarNav">
+                <a href="dashboard.html" class="active">📊 Dashboard</a>
+                <a href="reports.html">📋 All Reports</a>
+                <a href="analytics.html">📈 Analytics</a>
+                <a href="report.html">➕ New Report</a>
+                <a href="add-user.html" id="addUserLink" style="display:none;">👤 Add User</a>
+                <a href="manage-products.html" id="manageProductsLink" style="display:none;">🏷️ Manage Products</a>
+            </nav>
+            <div class="sidebar-footer">
+                <button onclick="logout()" class="btn btn-outline" style="color:white; border-color:white;">Logout</button>
+            </div>
+        </aside>
+        <main class="main-content">
+            <div class="top-bar">
+                <h1>Dashboard</h1>
+                <span id="userDisplay"></span>
+            </div>
+            <div class="card-grid">
+                <div class="stat-card clickable" id="totalCard" style="background: #003399; color: white;">
+                    <span class="label">Total Reports</span>
+                    <span class="value" id="totalReports">0</span>
+                </div>
+                <div class="stat-card clickable" id="fakeCard" style="background: #cc0000; color: white;">
+                    <span class="label">Fake Products</span>
+                    <span class="value" id="fakeCount">0</span>
+                </div>
+                <div class="stat-card clickable" id="verifiedCard" style="background: #008000; color: white;">
+                    <span class="label">Verified</span>
+                    <span class="value" id="verifiedCount">0</span>
+                </div>
+                <div class="stat-card clickable" id="aiFlaggedCard" style="background: #c9a827; color: white;">
+                    <span class="label">AI Flagged</span>
+                    <span class="value" id="aiFlaggedCount">0</span>
+                </div>
+            </div>
+            <div class="map-container">
+                <div id="heatmap"></div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Google Maps with your API key -->
+    <script async defer
+        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyB9WnuHcORuduja4qnyn2HD4DJN0l8-x1M&loading=async&libraries=visualization&callback=initMap">
+    </script>
+
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+    <script src="firebase.js"></script>
+    <script src="app.js"></script>
+    <script>
+        let map, heatmap;
+        let currentUserRole = null;
+        let currentUserId = null;
+
+        function initMap() {
+            try {
+                const kenyaCenter = { lat: -0.0236, lng: 37.9062 };
+                map = new google.maps.Map(document.getElementById('heatmap'), {
+                    zoom: 7,
+                    center: kenyaCenter,
+                    mapTypeId: 'terrain',
+                });
+                heatmap = new google.maps.visualization.HeatmapLayer({
+                    data: [],
+                    map: map,
+                    radius: 25,
+                    opacity: 0.7,
+                });
+                loadHeatmapData();
+            } catch (error) {
+                console.error('Map init error:', error);
+                document.getElementById('heatmap').innerHTML = '<p style="padding:2rem;color:red;">Map unavailable. Check API key restrictions.</p>';
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            const { user, role } = await checkAuth(['admin', 'officer']);
+            currentUserId = user.uid;
+            currentUserRole = role;
+            document.getElementById('userDisplay').textContent = user.email;
+
+            if (role === 'admin') {
+                document.getElementById('addUserLink').style.display = 'flex';
+                document.getElementById('manageProductsLink').style.display = 'flex';
+                listenForNewReports();
+                requestNotificationPermission();
+            }
+
+            loadRealtimeStats();
+
+            document.getElementById('totalCard').addEventListener('click', () => { window.location.href = 'reports.html'; });
+            document.getElementById('fakeCard').addEventListener('click', () => { window.location.href = 'reports.html?status=fake'; });
+            document.getElementById('verifiedCard').addEventListener('click', () => { window.location.href = 'reports.html?status=verified'; });
+            document.getElementById('aiFlaggedCard').addEventListener('click', () => { window.location.href = 'reports.html?aiFlagged=true'; });
+        });
+
+        function loadRealtimeStats() {
+            let query = db.collection('reports');
+            if (currentUserRole === 'officer') {
+                query = query.where('userId', '==', currentUserId);
+            }
+            query.onSnapshot(snapshot => {
+                let total = 0, fake = 0, verified = 0, aiFlagged = 0;
+                snapshot.forEach(doc => {
+                    total++;
+                    const d = doc.data();
+                    const status = d.status;
+                    if (status === 'fake') fake++;
+                    if (status === 'verified') verified++;
+                    if (d.aiResult && d.aiResult.potentialConcern) aiFlagged++;
+                });
+                document.getElementById('totalReports').textContent = total;
+                document.getElementById('fakeCount').textContent = fake;
+                document.getElementById('verifiedCount').textContent = verified;
+                document.getElementById('aiFlaggedCount').textContent = aiFlagged;
+            }, error => { console.error('Stats listener error:', error); });
+        }
+
+        function loadHeatmapData() {
+            let query = db.collection('reports');
+            if (currentUserRole === 'officer') {
+                query = query.where('userId', '==', currentUserId);
+            }
+            query.get().then(snapshot => {
+                const points = [];
+                snapshot.forEach(doc => {
+                    const d = doc.data();
+                    if (d.lat && d.lng) points.push(new google.maps.LatLng(d.lat, d.lng));
+                });
+                if (heatmap) heatmap.setData(points);
+            }).catch(err => console.error('Heatmap data error:', err));
+        }
+    </script>
+</body>
+</html>
